@@ -1,6 +1,8 @@
 use crate::mbi::{
-    AHAB_KEY_SIZE_P384, AhabHash, ECC_P384_COORD_LEN, HashAlgorithm, SignAlgorithm, SrkData,
-    SrkRecordEcsda, SrkRecordMldsa, SrkTableEcsdaP384, SrkTableMldsa,
+    AHAB_CONTAINER_VERSION, AHAB_KEY_SIZE_P384, AHAB_SIGBLK_VERSION, AhabContainer,
+    AhabContainerFlags, AhabHash, ECC_P384_COORD_LEN, HashAlgorithm, ImageEntry, SignAlgorithm,
+    SignatureBlock, SignatureContainer, SrkArrayHybrid, SrkData, SrkRecordEcsda, SrkRecordMldsa,
+    SrkTableEcsdaP384, SrkTableMldsa, TAG_AHAB_CONTAINER_HEADER, TAG_AHAB_SRK_ARRAY, ToVec, hash,
 };
 
 mod mbi;
@@ -23,12 +25,11 @@ pub enum ImageType {
 }
 
 pub struct Image {
-    pub image: Vec<u8>,
-    pub load_address: u32,
-    pub entry_point: u32,
+    pub data: Vec<u8>,
+    pub load_address: u64,
+    pub entry_point: u64,
     pub image_type: ImageType,
     pub hash_type: HashAlgorithm,
-    pub version: u32,
 }
 
 pub struct SrkTable {
@@ -45,6 +46,8 @@ pub fn build_hybrid_mbi_container(
     used_srk_id: u8,
     srk_ecdsa: [Vec<u8>; 4], // The contents of the .pub files
     srk_mldsa: [Vec<u8>; 4], // The contents of the .pem files
+    fuse_version: u8,
+    image_version: u16,
 ) -> Vec<u8> {
     assert!(!images.is_empty(), "At least one image must be provided");
     assert_eq!(
@@ -66,7 +69,16 @@ pub fn build_hybrid_mbi_container(
         "`used_srk_id` must be in the range of 0..=3"
     );
 
-    let srk_ecdsa_table = SrkTableEcsdaP384 {
+    let srk_data_ecdsa = SrkData {
+        srk_id: used_srk_id,
+        data: srk_ecdsa[used_srk_id as usize].clone(),
+    };
+    let srk_data_mldsa = SrkData {
+        srk_id: used_srk_id,
+        data: srk_mldsa[used_srk_id as usize].clone(),
+    };
+
+    let srk_table_ecsda = SrkTableEcsdaP384 {
         records: {
             let [e0, e1, e2, e3] = srk_ecdsa;
             [
@@ -78,7 +90,7 @@ pub fn build_hybrid_mbi_container(
         },
     };
 
-    let srk_mldsa_table = SrkTableMldsa {
+    let srk_table_mldsa = SrkTableMldsa {
         records: {
             let [e0, e1, e2, e3] = srk_mldsa;
             [
@@ -90,7 +102,55 @@ pub fn build_hybrid_mbi_container(
         },
     };
 
-    todo!()
+    let srk_array = SrkArrayHybrid {
+        version: 0x0,
+        len: 0xD00,
+        tag: TAG_AHAB_SRK_ARRAY,
+        count: 2,
+        srk_table_ecsda,
+        srk_data_ecdsa,
+        srk_table_mldsa,
+        srk_data_mldsa,
+    };
+
+    let signature_block = SignatureBlock {
+        version: AHAB_SIGBLK_VERSION,
+        cert_off: 0x0,
+        srk_off: 0x10,
+        srk_array,
+        signatures: [
+            SignatureContainer {
+                signature: Vec::from([00; 0x64]), // Unsigned
+            },
+            SignatureContainer {
+                signature: Vec::from([00; 0x1217]), // Unsigned
+            },
+        ],
+    };
+
+    let container = AhabContainer {
+        version: AHAB_CONTAINER_VERSION,
+        flags: AhabContainerFlags::new()
+            .with_used_srk_id(used_srk_id)
+            .with_srk_set(srk_set as _),
+        fuse_version,
+        image_version,
+        images: images
+            .into_iter()
+            .map(|image| ImageEntry {
+                offset: 0,
+                size: image.data.len().try_into().unwrap(),
+                load_address: image.load_address,
+                entry_point: image.entry_point,
+                flags: 0x15,
+                hash: hash(&image.data, HashAlgorithm::Sha384),
+            })
+            .collect(),
+        signature_block,
+        tag: TAG_AHAB_CONTAINER_HEADER,
+    };
+
+    container.to_vec().unwrap()
 }
 
 fn srk_ecdsa_to_record(index: u8, data: Vec<u8>) -> SrkRecordEcsda {
