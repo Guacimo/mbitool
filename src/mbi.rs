@@ -29,11 +29,11 @@ trait BinaryLen {
     fn binary_len(&self) -> usize;
 }
 
-trait AhabHash {
+pub trait AhabHash {
     fn hash(&self, algo: HashAlgorithm) -> Result<[u8; 64], binrw::Error>;
 }
 
-trait ToVec {
+pub trait ToVec {
     fn to_vec(&self) -> Result<Vec<u8>, binrw::Error>;
 }
 
@@ -55,23 +55,27 @@ where
 {
     fn hash(&self, algo: HashAlgorithm) -> Result<[u8; 64], binrw::Error> {
         let data = self.to_vec()?;
-        let mut out = [0u8; 64];
-        match algo {
-            HashAlgorithm::Sha512 => {
-                out.copy_from_slice(&Sha512::digest(data));
-            }
-            HashAlgorithm::Sha384 => {
-                out[..48].copy_from_slice(&Sha384::digest(data));
-            }
-        }
-        Ok(out)
+        Ok(hash(&data, algo))
     }
+}
+
+pub fn hash(data: &[u8], algo: HashAlgorithm) -> [u8; 64] {
+    let mut out = [0u8; 64];
+    match algo {
+        HashAlgorithm::Sha512 => {
+            out.copy_from_slice(&Sha512::digest(data));
+        }
+        HashAlgorithm::Sha384 => {
+            out[..48].copy_from_slice(&Sha384::digest(data));
+        }
+    }
+    out
 }
 
 #[binrw]
 #[brw(repr = u8)]
 #[derive(Debug, Eq, PartialEq)]
-enum HashAlgorithm {
+pub enum HashAlgorithm {
     Sha384 = 0x01,
     Sha512 = 0x02,
 }
@@ -79,7 +83,7 @@ enum HashAlgorithm {
 #[binrw]
 #[brw(repr = u8)]
 #[derive(Debug, Eq, PartialEq)]
-enum SignAlgorithm {
+pub enum SignAlgorithm {
     Mldsa = 0xD2,
     Ecdsa = 0x27,
 }
@@ -109,9 +113,9 @@ impl BinaryLen for ImageEntry {
 #[brw(little)]
 #[br(map = Self::from_bytes)]
 #[bw(map = |x: &Self| Self::into_bytes(*x))]
-struct AhabContainerFlags {
-    srk_set: B4,
-    used_srk_id: B2,
+pub struct AhabContainerFlags {
+    pub srk_set: B4,
+    pub used_srk_id: B2,
     #[skip]
     padding: B26,
 }
@@ -125,15 +129,15 @@ impl BinaryLen for AhabContainerFlags {
 #[binrw]
 #[brw(little)]
 #[derive(Debug, Eq, PartialEq)]
-struct AhabContainer {
-    version: u8,
+pub struct AhabContainer {
+    pub version: u8,
     #[br(temp)]
     #[bw(calc = self.binary_len() as u16)]
     len: u16,
-    tag: u8,
-    flags: AhabContainerFlags,
-    image_version: u16,
-    fuse_version: u8,
+    pub tag: u8,
+    pub flags: AhabContainerFlags,
+    pub image_version: u16,
+    pub fuse_version: u8,
     #[br(temp)]
     #[bw(calc = images.len() as u8)]
     images_count: u8,
@@ -142,8 +146,8 @@ struct AhabContainer {
     #[brw(pad_after(2))]
     sigblk_off: u16,
     #[br(count = images_count)]
-    images: Vec<ImageEntry>,
-    signature_block: SignatureBlock,
+    pub images: Vec<ImageEntry>,
+    pub signature_block: SignatureBlock,
 }
 
 impl BinaryLen for AhabContainer {
@@ -156,7 +160,7 @@ impl BinaryLen for AhabContainer {
 #[binrw]
 #[brw(little)]
 #[derive(Debug, Eq, PartialEq)]
-struct SignatureContainer {
+pub struct SignatureContainer {
     #[br(temp)]
     #[bw(calc = 0x0)]
     #[br(assert(version == 0x0, "Incompatible signature container version"))]
@@ -166,7 +170,7 @@ struct SignatureContainer {
     ///TAG_AHAB_SIGNATURE
     #[brw(magic = 0xD8u8)]
     #[br(count = len - 4)]
-    signature: Vec<u8>,
+    pub signature: Vec<u8>,
 }
 
 impl BinaryLen for SignatureContainer {
@@ -178,23 +182,23 @@ impl BinaryLen for SignatureContainer {
 #[binrw]
 #[brw(little)]
 #[derive(Debug, Eq, PartialEq)]
-struct SignatureBlock {
+pub struct SignatureBlock {
     // AHAB_SIGBLK_VERSION
-    version: u8,
+    pub version: u8,
     #[bw(calc = self.binary_len() as u16)]
     len: u16,
     // TAG_AHAB_SIGNATURE_BLOCK
     #[brw(magic = 0x90u8)]
     // 0x0
-    cert_off: u16,
+    pub cert_off: u16,
     // 0x10
-    srk_off: u16,
+    pub srk_off: u16,
     #[brw(pad_after(4))]
     #[bw(calc = (0x10 + srk_array.len) as u32)]
     sig_off: u32,
     #[brw(pad_size_to(0xD00))]
-    srk_array: SrkArrayHybrid,
-    signatures: [SignatureContainer; 2],
+    pub srk_array: SrkArrayHybrid,
+    pub signatures: [SignatureContainer; 2],
 }
 
 impl BinaryLen for SignatureBlock {
@@ -212,23 +216,23 @@ impl BinaryLen for SignatureBlock {
 #[binrw]
 #[brw(little)]
 #[derive(Debug, Eq, PartialEq)]
-struct SrkRecordEcsda {
+pub struct SrkRecordEcsda {
     // TAG_AHAB_SRK_RECORD 0xE1
     #[brw(magic = 0xE1u8)]
     // In the code as 12 + 64
     #[bw(calc = self.binary_len() as u16)]
     len: u16,
     // AHAB_SIGN_ALGO_ECSDA 0x27
-    sign_algorithm: SignAlgorithm,
+    pub sign_algorithm: SignAlgorithm,
     // AHAB_HASH_SHA384 0x01
-    hash_algorithm: HashAlgorithm,
+    pub hash_algorithm: HashAlgorithm,
     // AHAB_KEY_SIZE_P384 0x02
     #[brw(pad_after(2))]
-    key_size: u8,
-    p_len_x: u16,
-    p_len_y: u16,
+    pub key_size: u8,
+    pub p_len_x: u16,
+    pub p_len_y: u16,
     #[br(count = len - 12)]
-    crypto_params: Vec<u8>,
+    pub crypto_params: Vec<u8>,
 }
 
 impl BinaryLen for SrkRecordEcsda {
@@ -240,22 +244,22 @@ impl BinaryLen for SrkRecordEcsda {
 #[binrw]
 #[brw(little)]
 #[derive(Debug, Eq, PartialEq)]
-struct SrkRecordMldsa {
+pub struct SrkRecordMldsa {
     // TAG_AHAB_SRK_RECORD 0xE1
     #[brw(magic = 0xE1u8)]
     // 12 + 64?
     #[bw(calc = self.binary_len() as u16)]
     len: u16,
     // AHAB_SIGN_ALGO_ML_DSA 0xD2
-    sign_algorithm: SignAlgorithm,
+    pub sign_algorithm: SignAlgorithm,
     // AHAB_HASH_SHA384 0x01
-    hash_algorithm: HashAlgorithm,
+    pub hash_algorithm: HashAlgorithm,
     #[brw(pad_after(2))]
-    key_size: u8,
+    pub key_size: u8,
     #[brw(pad_after(2))]
-    p_len: u16,
+    pub p_len: u16,
     #[br(count = len - 12)]
-    crypto_params: Vec<u8>,
+    pub crypto_params: Vec<u8>,
 }
 
 impl BinaryLen for SrkRecordMldsa {
@@ -267,7 +271,7 @@ impl BinaryLen for SrkRecordMldsa {
 #[binrw]
 #[brw(little)]
 #[derive(Debug, Eq, PartialEq)]
-struct SrkTableEcsdaP384 {
+pub struct SrkTableEcsdaP384 {
     // TAG_AHAB_SRK_TABLE_V2
     #[brw(magic = 0xD7u8)]
     #[bw(calc = self.binary_len() as u16)]
@@ -276,7 +280,7 @@ struct SrkTableEcsdaP384 {
     #[bw(calc = AHAB_SRK_TABLE_V2_VERSION)]
     #[br(assert(version == AHAB_SRK_TABLE_V2_VERSION, "Incompatible srk table version"))]
     version: u8,
-    records: [SrkRecordEcsda; 4],
+    pub records: [SrkRecordEcsda; 4],
 }
 
 impl BinaryLen for SrkTableEcsdaP384 {
@@ -292,7 +296,7 @@ impl BinaryLen for SrkTableEcsdaP384 {
 #[binrw]
 #[brw(little)]
 #[derive(Debug, Eq, PartialEq)]
-struct SrkTableMldsa {
+pub struct SrkTableMldsa {
     // TAG_AHAB_SRK_TABLE_V2
     #[brw(magic = 0xD7u8)]
     #[bw(calc = self.binary_len() as u16)]
@@ -301,7 +305,7 @@ struct SrkTableMldsa {
     #[bw(calc = AHAB_SRK_TABLE_V2_VERSION)]
     #[br(assert(version == AHAB_SRK_TABLE_V2_VERSION, "Incompatible srk table version"))]
     version: u8,
-    records: [SrkRecordMldsa; 4],
+    pub records: [SrkRecordMldsa; 4],
 }
 
 impl BinaryLen for SrkTableMldsa {
@@ -317,16 +321,16 @@ impl BinaryLen for SrkTableMldsa {
 #[binrw]
 #[brw(little)]
 #[derive(Debug, Eq, PartialEq, Clone)]
-struct SrkData {
+pub struct SrkData {
     #[brw(pad_before(1))]
     #[bw(calc = self.binary_len() as u16 )]
     len: u16,
     // TAG_AHAB_SRK_DATA
     #[brw(magic = 0x5Du8)]
     #[brw(pad_after(3))]
-    srk_id: u8,
+    pub srk_id: u8,
     #[br(count = len - 8 ) ]
-    data: Vec<u8>,
+    pub data: Vec<u8>,
 }
 
 impl BinaryLen for SrkData {
@@ -338,20 +342,20 @@ impl BinaryLen for SrkData {
 #[binrw]
 #[brw(little)]
 #[derive(Debug, Eq, PartialEq)]
-struct SrkArrayHybrid {
+pub struct SrkArrayHybrid {
     // 0x0
-    version: u8,
+    pub version: u8,
     // length 0xD00
-    len: u16,
+    pub len: u16,
     //TAG_AHAB_SRK_ARRAY
-    tag: u8,
+    pub tag: u8,
     #[brw(pad_after(3))]
-    // Seemingly always to for the hybrid signing?
-    count: u8,
-    srk_table_ecsda: SrkTableEcsdaP384,
-    srk_data_ecsda: SrkData,
-    srk_table_mldsa: SrkTableMldsa,
-    srk_data_mldsa: SrkData,
+    // Seemingly always two for the hybrid signing?
+    pub count: u8,
+    pub srk_table_ecsda: SrkTableEcsdaP384,
+    pub srk_data_ecdsa: SrkData,
+    pub srk_table_mldsa: SrkTableMldsa,
+    pub srk_data_mldsa: SrkData,
 }
 
 impl BinaryLen for SrkArrayHybrid {
@@ -1042,7 +1046,7 @@ mod test {
 
     #[test]
     fn produce_container_new() {
-        let ecsda_data = ECDSAXY
+        let ecdsa_data = ECDSAXY
             .iter()
             .enumerate()
             .map(|(id, ec)| SrkData {
@@ -1053,7 +1057,7 @@ mod test {
 
         let used = 2;
 
-        let mut ecsda_crypto_params = ecsda_data.iter().map(|ecsda_data| {
+        let mut ecsda_crypto_params = ecdsa_data.iter().map(|ecsda_data| {
             let mut data = Cursor::new(Vec::new());
             ecsda_data.write(&mut data).expect("Failed to write");
             crate::original_code::srk_data_hash_64(&data.into_inner(), AHAB_HASH_SHA384)
@@ -1115,7 +1119,7 @@ mod test {
             tag: TAG_AHAB_SRK_ARRAY,
             count: 2,
             srk_table_ecsda,
-            srk_data_ecsda: ecsda_data[used].clone(),
+            srk_data_ecdsa: ecdsa_data[used].clone(),
             srk_table_mldsa,
             srk_data_mldsa: mldsa_data[used].clone(),
         };
