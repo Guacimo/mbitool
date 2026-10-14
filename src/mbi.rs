@@ -71,7 +71,7 @@ where
 #[binrw]
 #[brw(repr = u8)]
 #[derive(Debug, Eq, PartialEq)]
-enum HashAlgorithm {
+pub enum HashAlgorithm {
     Sha384 = 0x01,
     Sha512 = 0x02,
 }
