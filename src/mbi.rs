@@ -325,7 +325,7 @@ struct SrkData {
     #[brw(magic = 0x5Du8)]
     #[brw(pad_after(3))]
     srk_id: u8,
-    #[br(count = len - 7 ) ]
+    #[br(count = len - 8 ) ]
     data: Vec<u8>,
 }
 
