@@ -39,6 +39,16 @@ pub struct Image<'d> {
     pub hash_type: HashAlgorithm,
 }
 
+pub struct SignConfig {
+    pub srk_set: SrkSet,
+    /// The index of the srk that's used to as the srk data for this container
+    pub used_srk_id: u8,
+    /// The contents of the .pub files
+    pub srk_ecdsa: [Vec<u8>; 4],
+    /// The contents of the .pem files
+    pub srk_mldsa: [Vec<u8>; 4],
+}
+
 pub struct Unsigned;
 pub struct Signed;
 
@@ -60,10 +70,7 @@ impl MbiContainer<Unsigned> {
     pub fn build(
         mut images: Vec<Image<'_>>,
         container_address: u32,
-        srk_set: SrkSet,
-        used_srk_id: u8, // The index of the srk that's used to as the srk data for this container
-        srk_ecdsa: [Vec<u8>; 4], // The contents of the .pub files
-        srk_mldsa: [Vec<u8>; 4], // The contents of the .pem files
+        sign_config: SignConfig,
         fuse_version: u8,
         image_version: u16,
         exec_addr: u32, // Should be 0 for XIP images
@@ -74,17 +81,21 @@ impl MbiContainer<Unsigned> {
             ImageType::Executable,
             "First image must be an executable"
         );
-        assert_eq!(srk_set, SrkSet::Oem, "Only OEM SRK is supported now");
+        assert_eq!(
+            sign_config.srk_set,
+            SrkSet::Oem,
+            "Only OEM SRK is supported now"
+        );
         assert!(
-            srk_ecdsa.iter().all(|vec| vec.len() == 96),
+            sign_config.srk_ecdsa.iter().all(|vec| vec.len() == 96),
             "All ecdsa SRKs must be 96 bytes"
         );
         assert!(
-            srk_mldsa.iter().all(|vec| vec.len() == 1952),
+            sign_config.srk_mldsa.iter().all(|vec| vec.len() == 1952),
             "All mldsa SRKs must be 96 bytes"
         );
         assert!(
-            used_srk_id < 4,
+            sign_config.used_srk_id < 4,
             "`used_srk_id` must be in the range of 0..=3"
         );
         assert!(
@@ -93,17 +104,17 @@ impl MbiContainer<Unsigned> {
         );
 
         let srk_data_ecdsa = SrkData {
-            srk_id: used_srk_id,
-            data: srk_ecdsa[used_srk_id as usize].clone(),
+            srk_id: sign_config.used_srk_id,
+            data: sign_config.srk_ecdsa[sign_config.used_srk_id as usize].clone(),
         };
         let srk_data_mldsa = SrkData {
-            srk_id: used_srk_id,
-            data: srk_mldsa[used_srk_id as usize].clone(),
+            srk_id: sign_config.used_srk_id,
+            data: sign_config.srk_mldsa[sign_config.used_srk_id as usize].clone(),
         };
 
         let srk_table_ecsda = SrkTableEcsdaP384 {
             records: {
-                let [e0, e1, e2, e3] = srk_ecdsa;
+                let [e0, e1, e2, e3] = sign_config.srk_ecdsa;
                 [
                     srk_ecdsa_to_record(0, e0),
                     srk_ecdsa_to_record(1, e1),
@@ -115,7 +126,7 @@ impl MbiContainer<Unsigned> {
 
         let srk_table_mldsa = SrkTableMldsa {
             records: {
-                let [e0, e1, e2, e3] = srk_mldsa;
+                let [e0, e1, e2, e3] = sign_config.srk_mldsa;
                 [
                     srk_mldsa_to_record(0, e0),
                     srk_mldsa_to_record(1, e1),
@@ -154,8 +165,8 @@ impl MbiContainer<Unsigned> {
         let container = AhabContainer {
             version: AHAB_CONTAINER_VERSION,
             flags: AhabContainerFlags::new()
-                .with_used_srk_id(used_srk_id)
-                .with_srk_set(srk_set as _),
+                .with_used_srk_id(sign_config.used_srk_id)
+                .with_srk_set(sign_config.srk_set as _),
             fuse_version,
             image_version,
             images: images
@@ -166,7 +177,7 @@ impl MbiContainer<Unsigned> {
                     load_address: image.load_address,
                     entry_point: image.entry_point,
                     flags: 0x15,
-                    hash: hash(&image.data, HashAlgorithm::Sha384),
+                    hash: hash(image.data, HashAlgorithm::Sha384),
                 })
                 .collect(),
             signature_block,
@@ -178,7 +189,7 @@ impl MbiContainer<Unsigned> {
         // This will tell the ROM where to find the container
         crate::mbi::patch_mbi_payload_header(
             images[0].data,
-            container_offset.try_into().unwrap(),
+            container_offset,
             container.binary_len() as u32,
             exec_addr,
         )
@@ -228,7 +239,7 @@ fn srk_ecdsa_to_record(index: u8, data: Vec<u8>) -> SrkRecordEcsda {
         p_len_x: ECC_P384_COORD_LEN as u16,
         p_len_y: ECC_P384_COORD_LEN as u16,
         crypto_params: SrkData {
-            srk_id: index as u8,
+            srk_id: index,
             data,
         }
         .hash(HashAlgorithm::Sha384)
@@ -244,7 +255,7 @@ fn srk_mldsa_to_record(index: u8, data: Vec<u8>) -> SrkRecordMldsa {
         key_size: 0x09,
         p_len: data.len().try_into().unwrap(),
         crypto_params: SrkData {
-            srk_id: index as u8,
+            srk_id: index,
             data,
         }
         .hash(HashAlgorithm::Sha384)
