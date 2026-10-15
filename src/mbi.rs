@@ -145,12 +145,18 @@ pub struct AhabContainer {
     #[bw(calc = images.len() as u8)]
     images_count: u8,
     #[br(temp)]
-    #[bw(calc = (0x10u32 + (0x80u32 * images_count as u32)) as u16)]
+    #[bw(calc = self.signature_block_offset())]
     #[brw(pad_after(2))]
     sigblk_off: u16,
     #[br(count = images_count)]
     pub images: Vec<ImageEntry>,
     pub signature_block: SignatureBlock,
+}
+
+impl AhabContainer {
+    pub fn signature_block_offset(&self) -> u16 {
+        0x10 + (0x80 * self.images.len() as u16)
+    }
 }
 
 impl BinaryLen for AhabContainer {
