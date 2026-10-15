@@ -402,6 +402,7 @@ pub fn patch_mbi_payload_header(
         .ok_or(PatchError::LengthOverFlow)?;
     let mut cursor = Cursor::new(payload);
     cursor.set_position(MBI_HDR_OFF_TOTAL_LEN as u64);
+    // Read to check if we are not just writing to some random unexpected data.
     MbiHeader::read(&mut cursor)?;
     cursor.set_position(MBI_HDR_OFF_TOTAL_LEN as u64);
     MbiHeader {
