@@ -42,7 +42,7 @@ pub struct SrkTable {
 ///
 /// The first image must be an executable and its entry point is used as the overal execution address.
 pub fn build_hybrid_mbi_container(
-    mut images: Vec<Image>,
+    images: &mut Vec<Image>,
     srk_set: SrkSet,
     used_srk_id: u8,
     srk_ecdsa: [Vec<u8>; 4], // The contents of the .pub files
