@@ -62,12 +62,12 @@ impl MbiContainer<Unsigned> {
         mut images: Vec<Image<'_>>,
         container_address: u32,
         srk_set: SrkSet,
-        used_srk_id: u8,
+        used_srk_id: u8, // The index of the srk that's used to as the srk data for this container
         srk_ecdsa: [Vec<u8>; 4], // The contents of the .pub files
         srk_mldsa: [Vec<u8>; 4], // The contents of the .pem files
         fuse_version: u8,
         image_version: u16,
-        exec_addr: u32,
+        exec_addr: u32, // Should be 0 for XIP images
     ) -> Self {
         assert!(!images.is_empty(), "At least one image must be provided");
         assert_eq!(
