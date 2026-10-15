@@ -1,8 +1,9 @@
 use crate::mbi::{
     AHAB_CONTAINER_VERSION, AHAB_KEY_SIZE_P384, AHAB_SIGBLK_VERSION, AhabContainer,
-    AhabContainerFlags, AhabHash, ECC_P384_COORD_LEN, HashAlgorithm, ImageEntry, SignAlgorithm,
-    SignatureBlock, SignatureContainer, SrkArrayHybrid, SrkData, SrkRecordEcsda, SrkRecordMldsa,
-    SrkTableEcsdaP384, SrkTableMldsa, TAG_AHAB_CONTAINER_HEADER, TAG_AHAB_SRK_ARRAY, ToVec, hash,
+    AhabContainerFlags, AhabHash, BinaryLen, ECC_P384_COORD_LEN, HashAlgorithm, ImageEntry,
+    SignAlgorithm, SignatureBlock, SignatureContainer, SrkArrayHybrid, SrkData, SrkRecordEcsda,
+    SrkRecordMldsa, SrkTableEcsdaP384, SrkTableMldsa, TAG_AHAB_CONTAINER_HEADER,
+    TAG_AHAB_SRK_ARRAY, ToVec, hash,
 };
 
 mod mbi;
@@ -41,13 +42,14 @@ pub struct SrkTable {
 ///
 /// The first image must be an executable and its entry point is used as the overal execution address.
 pub fn build_hybrid_mbi_container(
-    images: Vec<Image>,
+    mut images: Vec<Image>,
     srk_set: SrkSet,
     used_srk_id: u8,
     srk_ecdsa: [Vec<u8>; 4], // The contents of the .pub files
     srk_mldsa: [Vec<u8>; 4], // The contents of the .pem files
     fuse_version: u8,
     image_version: u16,
+    exec_addr: u32,
 ) -> Vec<u8> {
     assert!(!images.is_empty(), "At least one image must be provided");
     assert_eq!(
@@ -127,6 +129,19 @@ pub fn build_hybrid_mbi_container(
             },
         ],
     };
+
+    let container_offset = images.iter().map(|img| img.data.len()).sum::<usize>() as u32;
+    let container_len = 16usize + (128usize * images.len()) + signature_block.binary_len();
+
+    if let Some(image) = images.get_mut(0) {
+        crate::mbi::patch_mbi_payload_header(
+            &mut image.data,
+            container_offset,
+            container_len as u32,
+            exec_addr,
+        )
+        .expect("Failed to patch mbi payload header");
+    }
 
     let container = AhabContainer {
         version: AHAB_CONTAINER_VERSION,
