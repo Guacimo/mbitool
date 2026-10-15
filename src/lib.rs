@@ -9,7 +9,6 @@ use crate::mbi::{
 };
 
 mod mbi;
-mod original_code;
 
 /// Which super root key is used
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
