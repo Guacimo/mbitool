@@ -1,10 +1,11 @@
-use std::{io::Cursor, iter::Sum};
+use std::io::{Cursor, SeekFrom};
 
 use binrw::binrw;
 use binrw::meta::WriteEndian;
 use binrw::prelude::*;
 use modular_bitfield::prelude::*;
 use sha2::{Digest, Sha384, Sha512};
+use thiserror::Error;
 
 pub const TAG_AHAB_CONTAINER_HEADER: u8 = 0x87;
 pub const TAG_AHAB_SIGNATURE: u8 = 0xD8;
@@ -25,7 +26,9 @@ pub const AHAB_SIGN_ALGO_ML_DSA: u8 = 0xD2;
 
 pub const ECC_P384_COORD_LEN: usize = 48;
 
-trait BinaryLen {
+const MBI_HDR_OFF_TOTAL_LEN: usize = 0x20;
+
+pub trait BinaryLen {
     fn binary_len(&self) -> usize;
 }
 
@@ -364,6 +367,53 @@ impl BinaryLen for SrkArrayHybrid {
     }
 }
 
+#[binrw]
+#[brw(little)]
+struct MbiHeader {
+    total_len: u32,
+    #[br(temp, assert(image_type == 0 || image_type == 4, "unexpected image type {image_type:#x}"))]
+    #[bw(calc = 4u32)]
+    image_type: u32,
+    container_offset: u32,
+    #[bw(seek_before = SeekFrom::Current(8))]
+    exec_addr: u32,
+}
+
+#[derive(Error, Debug)]
+pub enum PatchError {
+    #[error("total length overflow")]
+    LengthOverFlow,
+    #[error("binary write error")]
+    BinError(
+        #[source]
+        #[from]
+        binrw::error::Error,
+    ),
+}
+
+pub fn patch_mbi_payload_header(
+    payload: &mut [u8],
+    container_offset: u32,
+    container_len: u32,
+    exec_addr: u32,
+) -> Result<(), PatchError> {
+    let total_len = container_offset
+        .checked_add(container_len)
+        .ok_or(PatchError::LengthOverFlow)?;
+    let mut cursor = Cursor::new(payload);
+    cursor.set_position(MBI_HDR_OFF_TOTAL_LEN as u64);
+    // Read to check if we are not just writing to some random unexpected data.
+    MbiHeader::read(&mut cursor)?;
+    cursor.set_position(MBI_HDR_OFF_TOTAL_LEN as u64);
+    MbiHeader {
+        total_len,
+        container_offset,
+        exec_addr,
+    }
+    .write(&mut cursor)?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod test {
     use pretty_assertions::assert_eq;
@@ -372,9 +422,37 @@ mod test {
     use std::array;
     use std::io::Cursor;
 
+    use super::*;
     use crate::original_code;
 
-    use super::*;
+    #[test]
+    fn patch_mbi_payload_test() {
+        let mut buf = [0; 100];
+
+        patch_mbi_payload_header(&mut buf, 0x5, 0x100, 0x20).expect("New code failed to patch!");
+
+        let mut buf_2 = [0; 100];
+        crate::original_code::patch_mbi_payload_header(&mut buf_2, 0x5, 0x100, 0x20)
+            .expect("Old code failed to patch");
+
+        binary_compare(&buf, &buf_2);
+    }
+
+    #[test]
+    fn patch_mbi_payload_invalid_image_test() {
+        let mut buf = [0; 100];
+        buf[MBI_HDR_OFF_TOTAL_LEN + 5] = 0xD;
+
+        assert!(patch_mbi_payload_header(&mut buf, 0x5, 0x100, 0x20).is_err());
+        let mut buf_2 = [0; 100];
+        buf_2[MBI_HDR_OFF_TOTAL_LEN + 5] = 0xD;
+
+        assert!(
+            crate::original_code::patch_mbi_payload_header(&mut buf_2, 0x5, 0x100, 0x20).is_err()
+        );
+
+        binary_compare(&buf, &buf_2);
+    }
 
     const EXAMPLE: &[u8] = &[
         0x02, 0x94, 0x00, 0x87, 0x21, 0x00, 0x00, 0x00, 0x04, 0x00, 0x03, 0x01, 0x90, 0x00, 0x00,
@@ -995,7 +1073,7 @@ mod test {
         }
         .to_vec()
         .unwrap();
-        let orig = original_code::srk_table_v2_export_ecdsa_p384(&ECDSAXY).unwrap();
+        let orig = crate::original_code::srk_table_v2_export_ecdsa_p384(&ECDSAXY).unwrap();
         binary_compare(&res, &orig);
     }
 

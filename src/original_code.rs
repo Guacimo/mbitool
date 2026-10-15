@@ -10,6 +10,63 @@ use sha2::{Digest, Sha384, Sha512};
 
 use anyhow::anyhow;
 
+const MBI_HDR_OFF_TOTAL_LEN: usize = 0x20; // u32: container_offset + container_len
+const MBI_HDR_OFF_MAGIC_4: usize = 0x24; // u32: constant 4 in sample
+const MBI_HDR_OFF_CONTAINER_OFF: usize = 0x28; // u32: container_offset
+const MBI_HDR_OFF_EXEC_ADDR: usize = 0x34; // u32: execution address
+
+pub fn patch_mbi_payload_header(
+    payload: &mut [u8],
+    container_offset: u32,
+    container_len: u32,
+    exec_addr: u32,
+) -> anyhow::Result<()> {
+    let required = MBI_HDR_OFF_EXEC_ADDR + 4;
+    if payload.len() < required {
+        return Err(anyhow!(
+            "Payload too small for MBI header patching: len=0x{:X}, need>=0x{:X}",
+            payload.len(),
+            required
+        ));
+    }
+
+    // Some inputs may already have these fields patched (e.g., payload extracted from an existing MBI).
+    // Accept either all-zero (fresh .bin) or already-correct values.
+    let read_u32 = |off: usize| -> u32 {
+        let mut b = [0u8; 4];
+        b.copy_from_slice(&payload[off..off + 4]);
+        u32::from_le_bytes(b)
+    };
+
+    let total_len = container_offset
+        .checked_add(container_len)
+        .ok_or_else(|| anyhow!("total_len overflow"))?;
+
+    let expected = [
+        (MBI_HDR_OFF_TOTAL_LEN, total_len),
+        (MBI_HDR_OFF_MAGIC_4, 4u32),
+        (MBI_HDR_OFF_CONTAINER_OFF, container_offset),
+        (MBI_HDR_OFF_EXEC_ADDR, exec_addr),
+    ];
+
+    for (off, want) in expected {
+        let cur = read_u32(off);
+        if cur != 0 && cur != want {
+            return Err(anyhow!(
+                "Unexpected existing value at payload offset 0x{off:X}: got=0x{cur:08X}, expected 0x00000000 or 0x{want:08X}"
+            ));
+        }
+    }
+
+    payload[MBI_HDR_OFF_TOTAL_LEN..MBI_HDR_OFF_TOTAL_LEN + 4]
+        .copy_from_slice(&total_len.to_le_bytes());
+    payload[MBI_HDR_OFF_MAGIC_4..MBI_HDR_OFF_MAGIC_4 + 4].copy_from_slice(&4u32.to_le_bytes());
+    payload[MBI_HDR_OFF_CONTAINER_OFF..MBI_HDR_OFF_CONTAINER_OFF + 4]
+        .copy_from_slice(&container_offset.to_le_bytes());
+    payload[MBI_HDR_OFF_EXEC_ADDR..MBI_HDR_OFF_EXEC_ADDR + 4]
+        .copy_from_slice(&exec_addr.to_le_bytes());
+    Ok(())
+}
 fn le_u16(v: usize) -> anyhow::Result<[u8; 2]> {
     if v > 0xFFFF {
         return Err(anyhow!("value too large for u16: {v}"));
