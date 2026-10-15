@@ -27,10 +27,14 @@ pub enum ImageType {
     TzData = 5,
 }
 
-pub struct Image {
+pub struct Image<'d> {
     /// The bin data of the image
-    pub data: Vec<u8>,
+    pub data: &'d mut [u8],
+    /// The address of the image in flash
+    pub flash_address: u32,
+    /// Variable the ROM looks at
     pub load_address: u64,
+    /// Variable the ROM looks at
     pub entry_point: u64,
     pub image_type: ImageType,
     pub hash_type: HashAlgorithm,
@@ -55,7 +59,8 @@ impl MbiContainer<Unsigned> {
     ///
     /// The first image must be an executable and its entry point is used as the overal execution address.
     pub fn build(
-        images: &mut Vec<Image>,
+        mut images: Vec<Image<'_>>,
+        container_address: u32,
         srk_set: SrkSet,
         used_srk_id: u8,
         srk_ecdsa: [Vec<u8>; 4], // The contents of the .pub files
@@ -82,6 +87,10 @@ impl MbiContainer<Unsigned> {
         assert!(
             used_srk_id < 4,
             "`used_srk_id` must be in the range of 0..=3"
+        );
+        assert!(
+            container_address > images[0].flash_address,
+            "Container must be placed at a higher address than the primary image"
         );
 
         let srk_data_ecdsa = SrkData {
@@ -143,19 +152,6 @@ impl MbiContainer<Unsigned> {
             ],
         };
 
-        let container_offset = images.iter().map(|img| img.data.len()).sum::<usize>() as u32;
-        let container_len = 16usize + (128usize * images.len()) + signature_block.binary_len();
-
-        if let Some(image) = images.get_mut(0) {
-            crate::mbi::patch_mbi_payload_header(
-                &mut image.data,
-                container_offset,
-                container_len as u32,
-                exec_addr,
-            )
-            .expect("Failed to patch mbi payload header");
-        }
-
         let container = AhabContainer {
             version: AHAB_CONTAINER_VERSION,
             flags: AhabContainerFlags::new()
@@ -164,7 +160,7 @@ impl MbiContainer<Unsigned> {
             fuse_version,
             image_version,
             images: images
-                .into_iter()
+                .iter()
                 .map(|image| ImageEntry {
                     offset: 0,
                     size: image.data.len().try_into().unwrap(),
@@ -177,6 +173,17 @@ impl MbiContainer<Unsigned> {
             signature_block,
             tag: TAG_AHAB_CONTAINER_HEADER,
         };
+
+        let container_offset = container_address - images[0].flash_address;
+        // Patch the vector table of the first image (which we know is an executable)
+        // This will tell the ROM where to find the container
+        crate::mbi::patch_mbi_payload_header(
+            images[0].data,
+            container_offset.try_into().unwrap(),
+            container.binary_len() as u32,
+            exec_addr,
+        )
+        .expect("Failed to patch mbi payload header");
 
         MbiContainer {
             container,
